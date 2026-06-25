@@ -1,9 +1,14 @@
 // menu.cpp - Implementation of the interactive text menu.
 #include "menu.h"
 
+#include "serial_port.h"
+
+#include <cctype>
+#include <cstdlib>
 #include <fstream>
 #include <iostream>
 #include <string>
+#include <vector>
 
 namespace fan {
 
@@ -89,15 +94,60 @@ void run_script_file(CommandInterpreter& interp, std::istream& in,
         << interp.failed() << " failed)\n";
 }
 
+// Parse a string as a 1-based menu index. Returns false unless it is all
+// digits (so a device path or an explicit baud value falls through to be used
+// literally).
+bool parse_index(const std::string& s, int& out) {
+    if (s.empty()) return false;
+    for (char c : s)
+        if (!std::isdigit(static_cast<unsigned char>(c))) return false;
+    out = std::atoi(s.c_str());
+    return true;
+}
+
 void configure_comm(CommandInterpreter& interp, std::istream& in,
                     std::ostream& out) {
     std::string v;
-    interp.execute("listports");  // show what's currently plugged in
-    out << "  (press Enter to keep the current value)\n";
-    if (prompt_line(in, out, "  Serial port  : ", v) && !v.empty())
-        interp.execute("port " + v);
-    if (prompt_line(in, out, "  Baud rate    : ", v) && !v.empty())
-        interp.execute("baud " + v);
+    out << "  (type a number to pick from a list, or a value; blank keeps "
+           "current)\n";
+
+    // --- Serial port: numbered picker -----------------------------------
+    std::vector<PortInfo> ports = SerialPort::list_ports();
+    if (ports.empty()) {
+        out << "  (no serial ports detected)\n";
+    } else {
+        for (size_t i = 0; i < ports.size(); ++i) {
+            out << "    " << (i + 1) << ") " << ports[i].device;
+            if (!ports[i].description.empty())
+                out << "  - " << ports[i].description;
+            out << "\n";
+        }
+    }
+    if (prompt_line(in, out, "  Serial port  : ", v) && !v.empty()) {
+        int idx;
+        if (parse_index(v, idx) && idx >= 1 &&
+            idx <= static_cast<int>(ports.size()))
+            interp.execute("port " + ports[idx - 1].device);
+        else
+            interp.execute("port " + v);  // treat as a literal device path
+    }
+
+    // --- Baud rate: numbered picker -------------------------------------
+    static const char* kBauds[] = {"9600", "19200", "38400", "57600", "115200"};
+    const int kNumBauds = static_cast<int>(sizeof(kBauds) / sizeof(kBauds[0]));
+    out << "  Baud rate:";
+    for (int i = 0; i < kNumBauds; ++i)
+        out << "  " << (i + 1) << ") " << kBauds[i];
+    out << "\n";
+    if (prompt_line(in, out, "  Baud rate    : ", v) && !v.empty()) {
+        int idx;
+        if (parse_index(v, idx) && idx >= 1 && idx <= kNumBauds)
+            interp.execute(std::string("baud ") + kBauds[idx - 1]);
+        else
+            interp.execute("baud " + v);  // treat as a literal baud value
+    }
+
+    // --- Parity & address: free text ------------------------------------
     if (prompt_line(in, out, "  Parity (n/e/o): ", v) && !v.empty())
         interp.execute("parity " + v);
     if (prompt_line(in, out, "  Address (0-247): ", v) && !v.empty())
