@@ -92,6 +92,7 @@ void run_script_file(CommandInterpreter& interp, std::istream& in,
 void configure_comm(CommandInterpreter& interp, std::istream& in,
                     std::ostream& out) {
     std::string v;
+    interp.execute("listports");  // show what's currently plugged in
     out << "  (press Enter to keep the current value)\n";
     if (prompt_line(in, out, "  Serial port  : ", v) && !v.empty())
         interp.execute("port " + v);

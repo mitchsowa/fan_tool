@@ -7,6 +7,8 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 
+#include <algorithm>
+
 namespace fan {
 
 namespace {
@@ -138,6 +140,44 @@ size_t SerialPort::read_some(uint8_t* buffer, size_t max_len, unsigned timeout_m
 
 void SerialPort::flush() {
     if (is_open()) PurgeComm(handle_, PURGE_RXCLEAR | PURGE_TXCLEAR);
+}
+
+std::vector<PortInfo> SerialPort::list_ports() {
+    std::vector<PortInfo> ports;
+
+    // The kernel publishes every present COM port under this registry key:
+    // each value's name is the device path and its data is the "COMx" name.
+    HKEY key;
+    if (RegOpenKeyExA(HKEY_LOCAL_MACHINE,
+                      "HARDWARE\\DEVICEMAP\\SERIALCOMM", 0, KEY_READ,
+                      &key) != ERROR_SUCCESS) {
+        return ports;  // key absent when no ports exist - best-effort
+    }
+
+    char value_name[256];
+    BYTE data[256];
+    for (DWORD i = 0;; ++i) {
+        DWORD name_len = sizeof(value_name);
+        DWORD data_len = sizeof(data);
+        DWORD type = 0;
+        LONG r = RegEnumValueA(key, i, value_name, &name_len, nullptr, &type,
+                               data, &data_len);
+        if (r == ERROR_NO_MORE_ITEMS) break;
+        if (r != ERROR_SUCCESS) continue;
+        if (type != REG_SZ) continue;
+
+        std::string com(reinterpret_cast<char*>(data));
+        // The value name is the underlying device (e.g. "\Device\Serial0" or a
+        // USB-serial node) - useful as a description.
+        ports.push_back({com, std::string(value_name, name_len)});
+    }
+    RegCloseKey(key);
+
+    std::sort(ports.begin(), ports.end(),
+              [](const PortInfo& a, const PortInfo& b) {
+                  return a.device < b.device;
+              });
+    return ports;
 }
 
 }  // namespace fan

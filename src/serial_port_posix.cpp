@@ -4,13 +4,17 @@
 
 #include "serial_port.h"
 
+#include <dirent.h>
 #include <fcntl.h>
 #include <termios.h>
 #include <unistd.h>
 #include <sys/select.h>
+#include <sys/stat.h>
 
+#include <algorithm>
 #include <cerrno>
 #include <cstring>
+#include <fstream>
 
 namespace fan {
 
@@ -30,6 +34,50 @@ bool baud_to_speed(unsigned baud, speed_t& out) {
         case 230400: out = B230400; return true;
         default:     return false;
     }
+}
+
+// Read the first line of a small sysfs/text file, trimmed. Returns "" if the
+// file is absent or unreadable.
+std::string read_first_line(const std::string& path) {
+    std::ifstream f(path);
+    std::string line;
+    if (!std::getline(f, line)) return "";
+    size_t e = line.find_last_not_of(" \t\r\n");
+    return (e == std::string::npos) ? "" : line.substr(0, e + 1);
+}
+
+// Basename of the target of a symlink (e.g. the driver name behind
+// /sys/class/tty/ttyUSB0/device/driver -> ".../ftdi_sio").
+std::string symlink_basename(const std::string& path) {
+    char buf[1024];
+    ssize_t n = ::readlink(path.c_str(), buf, sizeof(buf) - 1);
+    if (n <= 0) return "";
+    buf[n] = '\0';
+    std::string target(buf);
+    size_t slash = target.find_last_of('/');
+    return (slash == std::string::npos) ? target : target.substr(slash + 1);
+}
+
+// Build a human-readable description for a tty by walking sysfs: prefer the USB
+// manufacturer/product strings, otherwise fall back to the kernel driver name.
+std::string describe_tty(const std::string& name) {
+    const std::string base = "/sys/class/tty/" + name + "/device";
+
+    // USB serial adapters expose product/manufacturer a couple of levels up
+    // (tty -> usb-interface -> usb-device). Probe both ".." and "../..".
+    for (const std::string& up : {std::string("/.."), std::string("/../..")}) {
+        std::string product = read_first_line(base + up + "/product");
+        if (!product.empty()) {
+            std::string mfr = read_first_line(base + up + "/manufacturer");
+            return mfr.empty() ? product : mfr + " " + product;
+        }
+    }
+
+    std::string driver = symlink_basename(base + "/driver");
+    // Newer kernels expose a generic "serial-base" wrapper driver literally
+    // named "port" for built-in UARTs - that conveys nothing, so drop it.
+    if (driver == "port") return "";
+    return driver;  // "" if even the driver link is missing
 }
 }  // namespace
 
@@ -180,6 +228,37 @@ size_t SerialPort::read_some(uint8_t* buffer, size_t max_len, unsigned timeout_m
 
 void SerialPort::flush() {
     if (fd_ >= 0) tcflush(fd_, TCIOFLUSH);
+}
+
+std::vector<PortInfo> SerialPort::list_ports() {
+    std::vector<PortInfo> ports;
+
+    DIR* dir = ::opendir("/sys/class/tty");
+    if (!dir) return ports;  // no sysfs - best-effort, return empty
+
+    for (dirent* ent = ::readdir(dir); ent; ent = ::readdir(dir)) {
+        std::string name = ent->d_name;
+        if (name == "." || name == "..") continue;
+
+        // A real port has a "device" subdirectory under its tty class entry;
+        // virtual lines (tty, console, pts) do not. This filters out the dozens
+        // of phantom nodes while keeping ttyUSB*, ttyACM*, real ttyS*, etc.
+        struct stat st;
+        std::string devlink = "/sys/class/tty/" + name + "/device";
+        if (::stat(devlink.c_str(), &st) != 0) continue;
+
+        std::string dev = "/dev/" + name;
+        if (::access(dev.c_str(), F_OK) != 0) continue;  // no /dev node
+
+        ports.push_back({dev, describe_tty(name)});
+    }
+    ::closedir(dir);
+
+    std::sort(ports.begin(), ports.end(),
+              [](const PortInfo& a, const PortInfo& b) {
+                  return a.device < b.device;
+              });
+    return ports;
 }
 
 }  // namespace fan

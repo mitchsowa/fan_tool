@@ -75,6 +75,7 @@ private:
     // Program a product profile's defaults into the connected fan.
     void cmd_program(const std::string& product);
     void cmd_list_products();
+    void cmd_list_serial_ports();
     void cmd_load_profile(const std::string& path);
     // Resolve a profile by name: loaded-from-file profiles first, then a
     // matching <name>.profile / profiles/<name>.profile file, then the

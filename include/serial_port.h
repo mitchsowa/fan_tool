@@ -32,6 +32,13 @@ public:
     explicit SerialError(const std::string& what) : std::runtime_error(what) {}
 };
 
+// One discovered serial port: the device path to open and a human-readable
+// description (driver/chip or USB product string) when one is available.
+struct PortInfo {
+    std::string device;       // e.g. "/dev/ttyUSB0" or "COM3"
+    std::string description;  // e.g. "FTDI FT232R USB UART" ("" if unknown)
+};
+
 class SerialPort {
 public:
     SerialPort() = default;
@@ -62,6 +69,11 @@ public:
 
     // Discard any buffered input/output (used to resynchronise the bus).
     void flush();
+
+    // Enumerate the serial ports currently present on the system, sorted by
+    // device name. Best-effort: returns an empty list if discovery is not
+    // supported or nothing is found. Does not open any port.
+    static std::vector<PortInfo> list_ports();
 
 private:
 #ifdef _WIN32

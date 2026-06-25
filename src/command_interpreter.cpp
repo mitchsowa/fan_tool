@@ -180,6 +180,22 @@ void CommandInterpreter::cmd_list_products() {
     out_ << "Load more with 'loadprofile <file>'.\n";
 }
 
+void CommandInterpreter::cmd_list_serial_ports() {
+    std::vector<PortInfo> ports = SerialPort::list_ports();
+    if (ports.empty()) {
+        out_ << "No serial ports found.\n";
+        return;
+    }
+    out_ << "Available serial ports:\n";
+    for (const PortInfo& p : ports) {
+        out_ << "  " << p.device;
+        if (!p.description.empty()) out_ << "  - " << p.description;
+        if (p.device == port_name_) out_ << "   [current]";
+        out_ << "\n";
+    }
+    out_ << "Select one with 'port <device>'.\n";
+}
+
 bool CommandInterpreter::resolve_profile(const std::string& name,
                                          ProductProfile& out) {
     // 1) Already loaded from a file this session.
@@ -346,7 +362,7 @@ CommandResult CommandInterpreter::execute(const std::string& raw_line) {
     try {
         if (cmd == "help" || cmd == "?") {
             out_ <<
-                "Connection : port <dev> [baud] | baud <n> | parity <n|e|o> |\n"
+                "Connection : listports | port <dev> [baud] | baud <n> | parity <n|e|o> |\n"
                 "             address <n> | offset <n> | timeout <ms> | retries <n> |\n"
                 "             connect | autoconnect | disconnect\n"
                 "Products   : products | loadprofile <file> | program <name>\n"
@@ -406,6 +422,8 @@ CommandResult CommandInterpreter::execute(const std::string& raw_line) {
             cmd_disconnect();
         } else if (cmd == "products" || cmd == "profiles") {
             cmd_list_products();
+        } else if (cmd == "listports" || cmd == "ports" || cmd == "lsports") {
+            cmd_list_serial_ports();
         } else if (cmd == "program") {
             if (args.size() < 2) throw std::runtime_error("usage: program <product>");
             cmd_program(args[1]);
