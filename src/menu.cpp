@@ -40,7 +40,7 @@ void show_menu(CommandInterpreter& interp, std::ostream& out) {
     out << "                             15) Load profile from file\n";
     out << "  Other                      16) Program a profile\n";
     out << "   18) Run test script (.fan) 17) Save settings to flash\n";
-    out << "   19) Command prompt (advanced)\n";
+    out << "   19) Command prompt (advanced) 20) Dump settings to file\n";
     out << "    0) Quit\n";
     out << "--------------------------------------------------------\n";
 }
@@ -157,6 +157,9 @@ void run_menu(CommandInterpreter& interp, std::istream& in, std::ostream& out) {
             run_script_file(interp, in, out);
         } else if (choice == "19") {
             run_advanced_prompt(interp, in, out);
+        } else if (choice == "20") {
+            do_with_prompt(interp, in, out, "dumpsettings",
+                           "  Output file (.fan): ");
         } else {
             out << "  Unrecognised choice '" << choice << "'\n";
         }

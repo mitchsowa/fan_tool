@@ -129,6 +129,54 @@ Register names are those from `list` / `docs/REGISTERS.md`. To add a new
 product, copy `e360.profile` to `profiles/<name>.profile` and edit it — no code
 changes needed.
 
+### Clone a fan's settings onto another fan
+
+To copy one fan's configuration to others, dump its settings to a `.fan` script
+and replay it:
+
+```bash
+fan_tool --port /dev/ttyUSB0 --shell
+fan> connect
+fan> dumpsettings my_fan.fan        # or menu item 20
+
+# then on each target fan:
+fan_tool --port /dev/ttyUSB0 my_fan.fan
+```
+
+`dumpsettings` reads every writable configuration register the tool knows
+about (comm settings, demand multiplexer, digital-input functions, heartbeat,
+direction, …) and writes a runnable script of `writeraw` lines ending in
+`save`. It uses **raw** register values so they reload exactly. Command/runtime
+registers (start, command speed/demand, flash commands) are excluded. Because
+comm-setting changes only apply after a power cycle, **power-cycle the target
+fan** after running the clone.
+
+> The dump covers the registers in the tool's map (see `list`), not literally
+> every address in the device — extend the table in
+> [`src/copra_registers.cpp`](src/copra_registers.cpp) to capture more.
+
+### Digital inputs and the motor-enable interlock
+
+Each digital input (DIN1–3) has a configurable function set by `din1_function` /
+`din2_function` / `din3_function` (registers 33395–33397):
+
+| Value | Function | | Value | Function |
+|------:|----------|-|------:|----------|
+| 0 | input disabled | | 4 | firemode enable |
+| 1 | **motor enable** | | 5 | alarm reset |
+| 2 | motor start | | 6–9 | discrete demand 0–3 |
+| 3 | set direction | | | |
+
+`din_enable` (33385) enables each input (bit0=DIN1…), `din_polarity` (33386)
+sets normally-open(0)/normally-closed(1), and `din_status` (33322) reads the
+live input state.
+
+> ⚠️ **A digital input set to *motor enable* takes priority over the Modbus
+> Start Command.** If such an input is open/inactive, the drive stays in `IDLE`
+> and ignores `start` — even with the Modbus demand source selected. To run a
+> fan over Modbus alone, set that input's function to `0` (disabled), `save`,
+> and **power-cycle** (the digital-input function is only re-read at boot).
+
 ### Auto-connect / comm fallback
 
 If a fan does not answer at the default settings, `autoconnect` (or
@@ -187,7 +235,7 @@ fan_tool --port /dev/ttyUSB0
                              15) Load profile from file
   Other                      16) Program a profile
    18) Run test script (.fan) 17) Save settings to flash
-   19) Command prompt (advanced)
+   19) Command prompt (advanced) 20) Dump settings to file
     0) Quit
   Select:
 ```
@@ -218,6 +266,7 @@ case-insensitive. Register names come from `list` (or `docs/REGISTERS.md`).
 ### Connection
 | Command | Meaning |
 |---------|---------|
+| `listports` | List the serial ports present on the system |
 | `port <dev> [baud]` | Set serial device (and optional baud) |
 | `baud <n>` / `parity <n\|e\|o>` / `address <n>` / `offset <n>` | Set link parameters |
 | `timeout <ms>` / `retries <n>` | Response timeout / retry count |
@@ -229,6 +278,7 @@ case-insensitive. Register names come from `list` (or `docs/REGISTERS.md`).
 |---------|---------|
 | `products` | List available product profiles |
 | `program <name>` | Program a product's default registers (e.g. `program e360`) |
+| `dumpsettings <file>` | Read this fan's config registers into a runnable `.fan` clone script |
 
 ### Identity & monitoring
 | Command | Meaning |

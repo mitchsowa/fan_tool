@@ -78,10 +78,23 @@ constexpr uint16_t kAppFlashStatus  = 35625;
 constexpr uint16_t kDriveFlashCommand = 4969;
 constexpr uint16_t kDriveFlashStatus  = 4905;
 
-// Flash command / status enumerations.
+// Flash command values (registers 35689 / 4969). The firmware resets the
+// command register back to kFlashWaitingForCmd once it has consumed a command.
+constexpr uint16_t kFlashWaitingForCmd     = 0;  // idle / command consumed
 constexpr uint16_t kFlashWriteUserSettings = 1;  // RAM2FLASH user settings
+constexpr uint16_t kFlashReadUserSettings  = 2;  // FLASH2RAM user settings
+
+// Flash status values (registers 35625 / 4905). The drive races through the
+// transient *_COMPLETE codes faster than Modbus polling can sample them and
+// settles on a steady healthy state (often FLASH_CRC_VALID = 16). Treat the
+// whole healthy group as success and only the explicit error codes as failure.
+constexpr uint16_t kFlashOk                    = 0;
+constexpr uint16_t kFlashError                 = 2;
 constexpr uint16_t kFlashSettingsWriteComplete = 8;
-constexpr uint16_t kFlashError = 2;
+constexpr uint16_t kFlashReadComplete          = 12;
+constexpr uint16_t kFlashWriteComplete         = 14;
+constexpr uint16_t kFlashWriteCrcComplete      = 15;
+constexpr uint16_t kFlashCrcValid              = 16;
 
 // Direction values.
 constexpr uint16_t kDirStd     = 9;
@@ -91,6 +104,12 @@ constexpr uint16_t kDirReverse = 6;
 constexpr uint16_t kSrcModbus  = 5;
 constexpr uint16_t kSrcPriority = 0;
 }  // namespace reg
+
+// True if a flash status code (register 35625 / 4905) indicates a hard failure.
+bool flash_status_is_error(uint16_t status);
+// True if a flash status code indicates the operation finished successfully
+// (any of the *_COMPLETE / OK / CRC_VALID healthy states).
+bool flash_status_is_complete(uint16_t status);
 
 // Human-readable decode of the mcState enum (register 41).
 std::string mc_state_name(uint16_t value);

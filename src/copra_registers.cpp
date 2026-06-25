@@ -71,6 +71,21 @@ const std::vector<RegDef>& copra_registers() {
         {"current_b", 52, RegSpace::Input, RegType::U16, 0.01, "A",
          "Peak motor phase current Ib"},
 
+        // --- Digital inputs (holding config / input status) ------------
+        {"din1_function", 33395, RegSpace::Holding, RegType::Enum, 1.0, "",
+         "DIN1 function (0=disabled,1=motor enable,2=motor start,3=set "
+         "direction,4=firemode,5=alarm reset,6-9=discrete demand 0-3)"},
+        {"din2_function", 33396, RegSpace::Holding, RegType::Enum, 1.0, "",
+         "DIN2 function (see din1_function)"},
+        {"din3_function", 33397, RegSpace::Holding, RegType::Enum, 1.0, "",
+         "DIN3 function (see din1_function)"},
+        {"din_enable", 33385, RegSpace::Holding, RegType::BitField, 1.0, "",
+         "Digital input enable bits (bit0=DIN1,1=DIN2,2=DIN3; 1=enabled)"},
+        {"din_polarity", 33386, RegSpace::Holding, RegType::BitField, 1.0, "",
+         "Digital input polarity bits (0=normally open, 1=normally closed)"},
+        {"din_status", 33322, RegSpace::Input, RegType::BitField, 1.0, "",
+         "Digital input filtered status (bit0=DIN1,1=DIN2,2=DIN3,3=PWM)"},
+
         // --- Identity (input) ------------------------------------------
         {"fw_minor", 554, RegSpace::Input, RegType::Ascii, 1.0, "",
          "Drive firmware revision - minor (YY)"},
@@ -143,6 +158,37 @@ uint16_t encode_value(const RegDef& reg, double value) {
     if (rounded < 0) rounded = 0;
     if (rounded > 65535) rounded = 65535;
     return static_cast<uint16_t>(rounded);
+}
+
+bool flash_status_is_error(uint16_t status) {
+    switch (status) {
+        case 2:   // FLASH_ERROR
+        case 4:   // FLASH_TIMEOUT
+        case 10:  // FLASH_ERASE_ADD_ERROR
+        case 18:  // FLASH_CRC_ERROR
+        case 19:  // FLASH_READ_ERROR
+        case 20:  // FLASH_OUT_OF_RANGE_ERROR
+        case 21:  // FLASH_VERSION_ERROR
+        case 22:  // FLASH_WRITE_DATA_LENGTH_ERROR
+            return true;
+        default:
+            return false;
+    }
+}
+
+bool flash_status_is_complete(uint16_t status) {
+    switch (status) {
+        case reg::kFlashOk:                    // 0
+        case reg::kFlashSettingsWriteComplete: // 8
+        case reg::kFlashReadComplete:          // 12
+        case 13:                               // FLASH_ERASE_COMPLETE
+        case reg::kFlashWriteComplete:         // 14
+        case reg::kFlashWriteCrcComplete:      // 15
+        case reg::kFlashCrcValid:              // 16
+            return true;
+        default:
+            return false;
+    }
 }
 
 std::string mc_state_name(uint16_t value) {

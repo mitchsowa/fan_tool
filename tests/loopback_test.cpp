@@ -114,6 +114,7 @@ struct MockSlave {
             if (reg == 41) value = 6;    // mcState = RUN
             if (reg == 47) value = 0xF830;  // measuredSpeed = -2000 (s16)
             if (reg == 35625 || reg == 4905) value = 8;  // flash write complete
+            if (reg == 35689 || reg == 4969) value = 0;  // flash cmd consumed
             body.push_back(static_cast<uint8_t>(value >> 8));
             body.push_back(static_cast<uint8_t>(value & 0xFF));
         }

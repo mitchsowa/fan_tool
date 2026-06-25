@@ -77,6 +77,9 @@ private:
     void cmd_list_products();
     void cmd_list_serial_ports();
     void cmd_load_profile(const std::string& path);
+    // Read every writable configuration register from the connected fan and
+    // write a runnable .fan clone script (writeraw lines + save) to `path`.
+    void cmd_dump_settings(const std::string& path);
     // Resolve a profile by name: loaded-from-file profiles first, then a
     // matching <name>.profile / profiles/<name>.profile file, then the
     // compiled-in defaults. Returns false if none match.

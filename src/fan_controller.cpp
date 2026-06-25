@@ -95,23 +95,33 @@ void FanController::save_settings() {
 
 void FanController::save_one(uint16_t cmd_reg, uint16_t status_reg,
                              const char* label) {
-    // Per spec 3.4: issue the save command, then poll status until
-    // FLASH_SETTINGS_WRITE_COMPLETE (8) or FLASH_ERROR (2).
+    // Issue the RAM2FLASH save command, then wait for the drive to finish.
+    // The firmware blows through the transient *_COMPLETE status codes faster
+    // than Modbus polling can catch them and settles on a steady healthy state
+    // (e.g. FLASH_CRC_VALID), so we cannot rely on sampling a single code.
+    // Instead we wait for the firmware to consume the command (it resets the
+    // command register back to kFlashWaitingForCmd) while the status is healthy,
+    // and fail only on an explicit flash error code.
     master_.write_single(cmd_reg, reg::kFlashWriteUserSettings);
 
+    uint16_t status = reg::kFlashOk;
     auto deadline =
         std::chrono::steady_clock::now() + std::chrono::seconds(5);
     while (std::chrono::steady_clock::now() < deadline) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(200));
-        uint16_t status = master_.read_input(status_reg, 1)[0];
-        if (status == reg::kFlashSettingsWriteComplete) return;
-        if (status == reg::kFlashError) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(150));
+        status = master_.read_input(status_reg, 1)[0];
+        if (flash_status_is_error(status)) {
             throw std::runtime_error(std::string("flash error while saving ") +
-                                     label + " settings");
+                                     label + " settings (status " +
+                                     std::to_string(status) + ")");
         }
+        uint16_t cmd = master_.read_holding(cmd_reg, 1)[0];
+        if (cmd == reg::kFlashWaitingForCmd && flash_status_is_complete(status))
+            return;  // command consumed and flash healthy -> saved
     }
     throw std::runtime_error(std::string("timeout saving ") + label +
-                             " settings to flash");
+                             " settings to flash (last status " +
+                             std::to_string(status) + ")");
 }
 
 double FanController::read_register(const RegDef& reg, uint16_t* raw_out) {
