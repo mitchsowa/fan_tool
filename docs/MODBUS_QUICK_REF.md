@@ -26,8 +26,8 @@ Addresses are the raw Modbus protocol addresses placed on the wire (as used by
 | Quantity          | Register | Type     | Unit / Scale | Notes                         |
 |-------------------|---------:|----------|--------------|-------------------------------|
 | DC bus voltage    |    46    | u16      | V (×1)       |                               |
-| Phase current Ia  |    51    | u16      | mA (×0.01)   | peak motor phase current      |
-| Phase current Ib  |    52    | u16      | mA (×0.01)   | peak motor phase current      |
+| Phase current Ia  |    51    | u16      | A (×0.01)    | peak motor phase current      |
+| Phase current Ib  |    52    | u16      | A (×0.01)    | peak motor phase current      |
 | Input power       |    49    | s16      | W (×1)       | calculated input power        |
 | Actual speed      |    47    | s16      | RPM (×1)     | measured speed feedback       |
 | Status word       |    41    | enum     | —            | motor-control state (below)   |

@@ -337,7 +337,7 @@ void CommandInterpreter::print_status(const FanStatus& s) {
     out_ << "  Speed        : " << s.measured_speed << " RPM\n";
     out_ << "  Input power  : " << s.input_power << " W\n";
     out_ << "  Bus voltage  : " << s.bus_voltage << " V\n";
-    out_ << "  Phase Ia     : " << s.current_a << " mA\n";
+    out_ << "  Phase Ia     : " << s.current_a << " A\n";
     out_ << "  IPM temp     : " << s.ipm_temp << " degC\n";
     if (s.active_faults.empty()) {
         out_ << "  Faults       : none\n";

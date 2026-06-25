@@ -24,7 +24,7 @@ struct FanStatus {
     int16_t input_power = 0;       // W
     int16_t ipm_temp = 0;          // deg C
     uint16_t bus_voltage = 0;      // V
-    double current_a = 0.0;        // mA
+    double current_a = 0.0;        // A
     uint16_t faults01 = 0;
     uint16_t faults02 = 0;
     std::vector<std::string> active_faults;

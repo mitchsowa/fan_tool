@@ -47,7 +47,7 @@ FanStatus FanController::read_status() {
     s.measured_speed = static_cast<int16_t>(m[6]);  // 47
     s.input_power = static_cast<int16_t>(m[8]);  // 49
     s.ipm_temp = static_cast<int16_t>(m[9]);     // 50
-    s.current_a = m[10] * 0.01;                  // 51 (scale 0.01 mA)
+    s.current_a = m[10] * 0.01;                  // 51 (scale 0.01 A)
     s.active_faults = decode_faults01(s.faults01);
 
     // Demand multiplexer status: 34345 demand value, 34346 active source.

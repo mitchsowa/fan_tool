@@ -66,9 +66,9 @@ const std::vector<RegDef>& copra_registers() {
          "Calculated shaft power"},
         {"ipm_temp", reg::kIpmTemperature, RegSpace::Input, RegType::S16, 1.0,
          "degC", "Control IPM temperature"},
-        {"current_a", 51, RegSpace::Input, RegType::U16, 0.01, "mA",
+        {"current_a", 51, RegSpace::Input, RegType::U16, 0.01, "A",
          "Peak motor phase current Ia"},
-        {"current_b", 52, RegSpace::Input, RegType::U16, 0.01, "mA",
+        {"current_b", 52, RegSpace::Input, RegType::U16, 0.01, "A",
          "Peak motor phase current Ib"},
 
         // --- Identity (input) ------------------------------------------
