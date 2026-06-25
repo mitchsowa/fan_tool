@@ -1,0 +1,88 @@
+// command_interpreter.h - Executes fan-tool commands from scripts or the REPL.
+//
+// One command per line. The same interpreter drives both a .fan test/commission
+// script (run non-interactively) and the interactive text shell, so the command
+// vocabulary is identical in both. Assertions (`expect`) accumulate pass/fail
+// counts to support test reporting.
+#ifndef FAN_TOOL_COMMAND_INTERPRETER_H
+#define FAN_TOOL_COMMAND_INTERPRETER_H
+
+#include <cstdint>
+#include <iosfwd>
+#include <string>
+
+#include "fan_controller.h"
+#include "modbus_rtu.h"
+#include "serial_port.h"
+
+namespace fan {
+
+struct CommandResult {
+    bool ok = true;          // command executed without error
+    bool quit = false;       // user asked to exit the shell
+};
+
+class CommandInterpreter {
+public:
+    // Output goes to `out`; the interactive shell passes std::cout. `interactive`
+    // enables REPL-only behaviour (e.g. the `pause` command).
+    explicit CommandInterpreter(std::ostream& out, bool interactive = false);
+
+    // Pre-seed connection parameters (from command-line flags) before any
+    // script runs. These are overridden by in-script commands.
+    void set_default_port(const std::string& port) { port_name_ = port; }
+    void set_default_baud(unsigned baud) { baud_ = baud; }
+    void set_default_address(uint8_t addr) { slave_ = addr; }
+    void set_default_offset(int offset) { address_offset_ = offset; }
+    void set_abort_on_failure(bool abort) { abort_on_failure_ = abort; }
+
+    // Execute a single command line. Returns the result (ok / quit).
+    CommandResult execute(const std::string& line);
+
+    // Run every line of a stream as a script. Returns the process exit code:
+    // 0 if all assertions passed and no fatal error occurred, 1 otherwise.
+    int run_script(std::istream& in);
+
+    // Assertion tallies.
+    int passed() const { return passed_; }
+    int failed() const { return failed_; }
+
+    // Print the test summary (counts) to the output stream.
+    void print_summary() const;
+
+private:
+    // Connection lifecycle.
+    void cmd_connect();
+    void cmd_disconnect();
+    void ensure_connected();
+    void apply_master_config();
+
+    // Helpers.
+    void print_status(const FanStatus& s);
+    bool record(bool pass, const std::string& message);  // tally + print
+
+    std::ostream& out_;
+    bool interactive_;
+    bool abort_on_failure_ = false;
+
+    SerialPort port_;
+    ModbusMaster master_;
+    FanController controller_;
+    bool connected_ = false;
+
+    // Connection parameters.
+    std::string port_name_;
+    unsigned baud_ = 115200;
+    uint8_t slave_ = 247;
+    int address_offset_ = 0;
+    unsigned response_timeout_ms_ = 600;
+    unsigned retries_ = 2;
+
+    int passed_ = 0;
+    int failed_ = 0;
+    int line_number_ = 0;
+};
+
+}  // namespace fan
+
+#endif  // FAN_TOOL_COMMAND_INTERPRETER_H
