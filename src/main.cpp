@@ -12,6 +12,7 @@
 #include <string>
 
 #include "command_interpreter.h"
+#include "product_profiles.h"
 
 namespace {
 
@@ -22,15 +23,22 @@ void print_usage(const char* prog) {
         "Options:\n"
         "  -p, --port <device>    Serial port (e.g. /dev/ttyUSB0 or COM3)\n"
         "  -b, --baud <rate>      Baud rate (default 115200)\n"
+        "      --parity <n|e|o>   Parity: none/even/odd (default none)\n"
         "  -a, --address <n>      Modbus slave address 0-247 (default 247)\n"
         "  -o, --offset <n>       Register address offset (default 0)\n"
+        "      --autoconnect      Probe known comm settings (default, then\n"
+        "                         each product) until the fan responds\n"
+        "      --program <name>   Auto-connect, program a product profile's\n"
+        "                         defaults to the fan, then exit (e.g. e360)\n"
+        "      --list-products    List available product profiles and exit\n"
         "  -i, --interactive      Force interactive shell even with a script\n"
         "      --abort-on-fail    Stop the script at the first failed assertion\n"
         "  -h, --help             Show this help\n\n"
         "Examples:\n"
         "  " << prog << " -p /dev/ttyUSB0 commission.fan\n"
-        "  " << prog << " -p COM3 -a 247 -i\n"
-        "  " << prog << " --port /dev/ttyUSB0          (interactive shell)\n";
+        "  " << prog << " -p /dev/ttyUSB0 --program e360\n"
+        "  " << prog << " -p /dev/ttyUSB0 --autoconnect -i\n"
+        "  " << prog << " --list-products\n";
 }
 
 }  // namespace
@@ -38,10 +46,13 @@ void print_usage(const char* prog) {
 int main(int argc, char** argv) {
     std::string port;
     unsigned baud = 115200;
+    fan::Parity parity = fan::Parity::None;
     int address = 247;
     int offset = 0;
     bool interactive = false;
     bool abort_on_fail = false;
+    bool autoconnect = false;
+    std::string program_product;
     std::string script_path;
 
     for (int i = 1; i < argc; ++i) {
@@ -60,10 +71,24 @@ int main(int argc, char** argv) {
             port = next("--port");
         } else if (arg == "-b" || arg == "--baud") {
             baud = static_cast<unsigned>(std::stoul(next("--baud")));
+        } else if (arg == "--parity") {
+            std::string p = next("--parity");
+            if (p == "n" || p == "none") parity = fan::Parity::None;
+            else if (p == "e" || p == "even") parity = fan::Parity::Even;
+            else if (p == "o" || p == "odd") parity = fan::Parity::Odd;
+            else { std::cerr << "error: bad parity '" << p << "'\n"; return 2; }
         } else if (arg == "-a" || arg == "--address") {
             address = std::stoi(next("--address"));
         } else if (arg == "-o" || arg == "--offset") {
             offset = std::stoi(next("--offset"));
+        } else if (arg == "--autoconnect") {
+            autoconnect = true;
+        } else if (arg == "--program") {
+            program_product = next("--program");
+        } else if (arg == "--list-products") {
+            fan::CommandInterpreter tmp(std::cout, false);
+            tmp.execute("products");
+            return 0;
         } else if (arg == "-i" || arg == "--interactive") {
             interactive = true;
         } else if (arg == "--abort-on-fail") {
@@ -87,9 +112,24 @@ int main(int argc, char** argv) {
     fan::CommandInterpreter interp(std::cout, /*interactive=*/!run_as_script);
     if (!port.empty()) interp.set_default_port(port);
     interp.set_default_baud(baud);
+    interp.set_default_parity(parity);
     interp.set_default_address(static_cast<uint8_t>(address));
     interp.set_default_offset(offset);
     interp.set_abort_on_failure(abort_on_fail);
+
+    // --program <product>: auto-connect, program the profile, then exit.
+    if (!program_product.empty()) {
+        if (port.empty()) {
+            std::cerr << "error: --program requires --port\n";
+            return 2;
+        }
+        fan::CommandResult c = interp.execute("autoconnect");
+        bool ok = c.ok;
+        if (ok) ok = interp.execute("program " + program_product).ok;
+        interp.execute("disconnect");
+        interp.print_summary();
+        return (ok && interp.failed() == 0) ? 0 : 1;
+    }
 
     if (run_as_script) {
         std::ifstream file(script_path);
@@ -108,6 +148,7 @@ int main(int argc, char** argv) {
         std::cout << "(port " << port << " @ " << baud << ", address " << address
                   << " - type 'connect' to open)\n";
     }
+    if (autoconnect) interp.execute("autoconnect");
     std::string line;
     while (true) {
         std::cout << "fan> " << std::flush;

@@ -71,12 +71,54 @@ fan_tool [options] [script.fan]
 
   -p, --port <device>    Serial port (/dev/ttyUSB0 or COM3)
   -b, --baud <rate>      Baud rate (default 115200)
+      --parity <n|e|o>   Parity: none/even/odd (default none)
   -a, --address <n>      Modbus slave address 0-247 (default 247)
   -o, --offset <n>       Register address offset (default 0; see note below)
+      --autoconnect      Probe known comm settings until the fan responds
+      --program <name>   Auto-connect, program a product profile, then exit
+      --list-products    List available product profiles and exit
   -i, --interactive      Force interactive shell even with a script
       --abort-on-fail    Stop the script at the first failed assertion
   -h, --help             Show help
 ```
+
+### Program a product's defaults
+
+The tool ships with **product profiles** — named bundles of default register
+values to program into a fan so it is configured consistently for a given
+product. The first is the **e360**.
+
+```bash
+fan_tool --list-products                          # show profiles
+fan_tool --port /dev/ttyUSB0 --program e360       # auto-connect + program + save
+```
+
+`--program` runs `autoconnect` first, so it works whether the fan is fresh from
+the factory (115200 8N1, addr 247) or already on the **e360** bus settings
+(**19200 8E1, address 11**). It writes the profile's registers, saves them to
+flash, and reminds you that comm-setting changes require a **power cycle**.
+
+In a script or the shell the same is available as `products` and `program
+<name>` (see [`scripts/program_e360.fan`](scripts/program_e360.fan)).
+
+### Auto-connect / comm fallback
+
+If a fan does not answer at the default settings, `autoconnect` (or
+`--autoconnect`) probes each known comm setting in turn — factory default first,
+then every product profile's settings — and adopts the first that responds:
+
+```bash
+fan_tool --port /dev/ttyUSB0 --autoconnect -i
+```
+
+> **e360 note:** these units run at **19200 baud, EVEN parity, Modbus address
+> 11**. If the default 115200/8N1/247 doesn't connect, that's the fallback
+> `autoconnect` will find (or set it manually with `--baud 19200 --parity even
+> --address 11`).
+
+To add another product, append a `ProductProfile` to
+[`src/product_profiles.cpp`](src/product_profiles.cpp) — the e360 entry is the
+template.
 
 ### Run a commissioning script
 
@@ -116,9 +158,16 @@ case-insensitive. Register names come from `list` (or `docs/REGISTERS.md`).
 | Command | Meaning |
 |---------|---------|
 | `port <dev> [baud]` | Set serial device (and optional baud) |
-| `baud <n>` / `address <n>` / `offset <n>` | Set link parameters |
+| `baud <n>` / `parity <n\|e\|o>` / `address <n>` / `offset <n>` | Set link parameters |
 | `timeout <ms>` / `retries <n>` | Response timeout / retry count |
 | `connect` / `disconnect` | Open / close the port |
+| `autoconnect` | Probe known comm settings until the fan responds |
+
+### Products
+| Command | Meaning |
+|---------|---------|
+| `products` | List available product profiles |
+| `program <name>` | Program a product's default registers (e.g. `program e360`) |
 
 ### Identity & monitoring
 | Command | Meaning |

@@ -19,6 +19,7 @@ endif()
 add_library(fan_core
     src/modbus_rtu.cpp
     src/copra_registers.cpp
+    src/product_profiles.cpp
     src/fan_controller.cpp
     src/command_interpreter.cpp
     src/serial_port_posix.cpp

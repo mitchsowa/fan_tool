@@ -14,9 +14,12 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <map>
+#include <sstream>
 #include <thread>
 #include <vector>
 
+#include "command_interpreter.h"
 #include "modbus_rtu.h"
 #include "serial_port.h"
 
@@ -39,6 +42,7 @@ struct MockSlave {
     std::atomic<bool>& stop;
     uint16_t last_written_value = 0;
     uint16_t last_written_addr = 0;
+    std::map<uint16_t, uint16_t> writes{};  // every FC06 write (addr -> value)
 
     void run() {
         std::vector<uint8_t> rx;
@@ -86,6 +90,7 @@ struct MockSlave {
             uint16_t val = static_cast<uint16_t>((rx[4] << 8) | rx[5]);
             last_written_addr = start;
             last_written_value = val;
+            writes[start] = val;
             send_echo(rx, need);  // FC06 response echoes the request
         } else if (fn == 0x10) {
             send_write_multi_reply(start, (rx[4] << 8) | rx[5]);
@@ -108,6 +113,7 @@ struct MockSlave {
             uint16_t value = reg;        // default: echo the address
             if (reg == 41) value = 6;    // mcState = RUN
             if (reg == 47) value = 0xF830;  // measuredSpeed = -2000 (s16)
+            if (reg == 35625 || reg == 4905) value = 8;  // flash write complete
             body.push_back(static_cast<uint8_t>(value >> 8));
             body.push_back(static_cast<uint8_t>(value & 0xFF));
         }
@@ -184,6 +190,23 @@ int main() {
         check(true, "write_multiple completed without error");
 
         port.close();
+
+        // End-to-end: drive the CommandInterpreter to program the e360 profile
+        // through the same mock. Verifies the comm registers are written with
+        // the right raw values and the flash-save poll completes.
+        std::ostringstream sink;
+        CommandInterpreter interp(sink, /*interactive=*/false);
+        interp.set_default_port(slave_name);
+        interp.set_default_address(247);
+        interp.execute("connect");
+        CommandResult pr = interp.execute("program e360");
+        check(pr.ok, "program e360 completed (interpreter)");
+        check(slave.writes[33902] == 11, "e360 set modbus_address (33902) = 11");
+        check(slave.writes[33897] == 192, "e360 set modbus_baud (33897) raw = 192 (19200)");
+        check(slave.writes[33900] == 2, "e360 set modbus_parity (33900) = 2 (EVEN)");
+        check(slave.writes[35948] == 9, "e360 set direction (35948) = 9 (STD)");
+        interp.execute("disconnect");
+
     } catch (const std::exception& e) {
         std::printf("  FAIL : exception: %s\n", e.what());
         ++failures;

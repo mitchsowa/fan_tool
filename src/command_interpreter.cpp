@@ -88,12 +88,126 @@ void CommandInterpreter::cmd_connect() {
     if (connected_) port_.close();
 
     SerialConfig cfg;
-    cfg.baud = baud_;  // COPRA is 8N1; data/stop/parity left at defaults
+    cfg.baud = baud_;
+    cfg.parity = parity_;
     port_.open(port_name_, cfg);
     apply_master_config();
     connected_ = true;
-    out_ << "Connected to " << port_name_ << " @ " << baud_
-         << " 8N1, slave address " << static_cast<int>(slave_) << "\n";
+    out_ << "Connected to " << port_name_ << " @ " << baud_ << " 8"
+         << (parity_ == Parity::None ? "N" : parity_ == Parity::Even ? "E" : "O")
+         << "1, slave address " << static_cast<int>(slave_) << "\n";
+}
+
+bool CommandInterpreter::try_connect(const CommSettings& comm) {
+    if (port_name_.empty()) {
+        throw std::runtime_error("no serial port set - use 'port <device>'");
+    }
+    port_.close();
+    connected_ = false;
+    try {
+        SerialConfig cfg;
+        cfg.baud = comm.baud;
+        cfg.parity = comm.parity;
+        port_.open(port_name_, cfg);
+        // Probe with short timing so a wrong setting fails fast.
+        master_.set_slave_address(comm.address);
+        master_.set_address_offset(address_offset_);
+        master_.set_response_timeout_ms(300);
+        master_.set_retries(1);
+        master_.read_input(reg::kMcState, 1);  // throws if no valid reply
+    } catch (const std::exception&) {
+        port_.close();
+        master_.set_response_timeout_ms(response_timeout_ms_);
+        master_.set_retries(retries_);
+        return false;
+    }
+    // Probe succeeded - adopt these settings as the live connection.
+    baud_ = comm.baud;
+    parity_ = comm.parity;
+    slave_ = comm.address;
+    connected_ = true;
+    master_.set_response_timeout_ms(response_timeout_ms_);
+    master_.set_retries(retries_);
+    return true;
+}
+
+void CommandInterpreter::cmd_autoconnect() {
+    out_ << "Auto-connecting on " << port_name_ << " ...\n";
+    // Try the currently-configured settings first, then the known candidates
+    // (factory default, then each product profile's operating settings),
+    // skipping duplicates.
+    std::vector<CommSettings> tries;
+    auto add = [&](const CommSettings& c) {
+        for (const CommSettings& e : tries)
+            if (e.baud == c.baud && e.parity == c.parity && e.address == c.address)
+                return;
+        tries.push_back(c);
+    };
+    add(CommSettings{baud_, parity_, slave_});
+    for (const CommSettings& c : autoconnect_candidates()) add(c);
+
+    for (const CommSettings& c : tries) {
+        out_ << "  trying " << c.str() << " ... ";
+        if (try_connect(c)) {
+            out_ << "OK\n";
+            out_ << "Connected at " << c.str() << "\n";
+            return;
+        }
+        out_ << "no response\n";
+    }
+    throw std::runtime_error(
+        "auto-connect failed: no fan responded on any known comm setting");
+}
+
+void CommandInterpreter::cmd_list_products() {
+    out_ << "Available product profiles:\n";
+    for (const ProductProfile& p : product_profiles()) {
+        out_ << "  " << p.name << "  - " << p.description << "\n";
+        out_ << "      comm after programming: " << p.comm.str() << "\n";
+        out_ << "      programs " << p.defaults.size()
+             << " register(s)" << (p.save_to_flash ? ", saved to flash" : "")
+             << "\n";
+    }
+}
+
+void CommandInterpreter::cmd_program(const std::string& product) {
+    ensure_connected();
+    const ProductProfile* p = find_product(product);
+    if (!p) {
+        throw std::runtime_error("unknown product '" + product +
+                                 "' (try 'products')");
+    }
+    out_ << "Programming '" << p->name << "' defaults into the fan:\n";
+    int written = 0;
+    for (const ProfileSetting& s : p->defaults) {
+        const RegDef* reg = find_register(s.reg_name);
+        if (!reg) {
+            record(false, "unknown register '" + s.reg_name + "' in profile");
+            continue;
+        }
+        controller_.write_register(*reg, s.value);
+        ++written;
+        out_ << "  set " << reg->name << " = " << s.value << " " << reg->unit;
+        if (!s.note.empty()) out_ << "   (" << s.note << ")";
+        out_ << "\n";
+    }
+    out_ << "  wrote " << written << " of " << p->defaults.size()
+         << " register(s)\n";
+
+    if (p->save_to_flash) {
+        out_ << "  saving to flash (app + drive)...\n";
+        controller_.save_settings();
+        out_ << "  saved.\n";
+    }
+    record(written == static_cast<int>(p->defaults.size()),
+           "programmed product '" + p->name + "'");
+
+    if (p->comm_changes) {
+        out_ << "\n  NOTE: communication settings (baud/parity/address) take "
+                "effect after a POWER CYCLE.\n";
+        out_ << "  After power-cycling, reconnect at: " << p->comm.str() << "\n";
+        out_ << "  (or just run 'autoconnect').\n";
+    }
 }
 
 void CommandInterpreter::cmd_disconnect() {
@@ -147,8 +261,10 @@ CommandResult CommandInterpreter::execute(const std::string& raw_line) {
     try {
         if (cmd == "help" || cmd == "?") {
             out_ <<
-                "Connection : port <dev> [baud] | baud <n> | address <n> | "
-                "offset <n> | timeout <ms> | retries <n> | connect | disconnect\n"
+                "Connection : port <dev> [baud] | baud <n> | parity <n|e|o> |\n"
+                "             address <n> | offset <n> | timeout <ms> | retries <n> |\n"
+                "             connect | autoconnect | disconnect\n"
+                "Products   : products | program <name>\n"
                 "Identity   : identify | status | monitor [count] [interval_s]\n"
                 "Control    : setspeed <rpm> | setdemand <pct> | start | stop |\n"
                 "             direction <std|reverse> | forcemodbus | save\n"
@@ -169,6 +285,14 @@ CommandResult CommandInterpreter::execute(const std::string& raw_line) {
             long b; if (args.size() < 2 || !parse_long(args[1], b))
                 throw std::runtime_error("usage: baud <value>");
             baud_ = static_cast<unsigned>(b);
+        } else if (cmd == "parity") {
+            if (args.size() < 2) throw std::runtime_error("usage: parity <none|even|odd>");
+            std::string p = to_lower(args[1]);
+            if (p == "none" || p == "n") parity_ = Parity::None;
+            else if (p == "even" || p == "e") parity_ = Parity::Even;
+            else if (p == "odd" || p == "o") parity_ = Parity::Odd;
+            else throw std::runtime_error("parity must be none, even or odd");
+            out_ << "Parity set to " << p << "\n";
         } else if (cmd == "address" || cmd == "addr" || cmd == "slave") {
             long a; if (args.size() < 2 || !parse_long(args[1], a) || a < 0 || a > 247)
                 throw std::runtime_error("usage: address <0-247>");
@@ -191,8 +315,15 @@ CommandResult CommandInterpreter::execute(const std::string& raw_line) {
             if (connected_) master_.set_retries(retries_);
         } else if (cmd == "connect") {
             cmd_connect();
+        } else if (cmd == "autoconnect") {
+            cmd_autoconnect();
         } else if (cmd == "disconnect") {
             cmd_disconnect();
+        } else if (cmd == "products" || cmd == "profiles") {
+            cmd_list_products();
+        } else if (cmd == "program") {
+            if (args.size() < 2) throw std::runtime_error("usage: program <product>");
+            cmd_program(args[1]);
         } else if (cmd == "identify") {
             ensure_connected();
             FanIdentity id = controller_.identify();

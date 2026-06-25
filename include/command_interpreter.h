@@ -13,6 +13,7 @@
 
 #include "fan_controller.h"
 #include "modbus_rtu.h"
+#include "product_profiles.h"
 #include "serial_port.h"
 
 namespace fan {
@@ -32,6 +33,7 @@ public:
     // script runs. These are overridden by in-script commands.
     void set_default_port(const std::string& port) { port_name_ = port; }
     void set_default_baud(unsigned baud) { baud_ = baud; }
+    void set_default_parity(Parity parity) { parity_ = parity; }
     void set_default_address(uint8_t addr) { slave_ = addr; }
     void set_default_offset(int offset) { address_offset_ = offset; }
     void set_abort_on_failure(bool abort) { abort_on_failure_ = abort; }
@@ -54,8 +56,16 @@ private:
     // Connection lifecycle.
     void cmd_connect();
     void cmd_disconnect();
+    void cmd_autoconnect();
+    // Open the port with the given comm settings and probe for a live fan.
+    // Returns true and leaves the port connected on success; false otherwise.
+    bool try_connect(const CommSettings& comm);
     void ensure_connected();
     void apply_master_config();
+
+    // Program a product profile's defaults into the connected fan.
+    void cmd_program(const std::string& product);
+    void cmd_list_products();
 
     // Helpers.
     void print_status(const FanStatus& s);
@@ -73,6 +83,7 @@ private:
     // Connection parameters.
     std::string port_name_;
     unsigned baud_ = 115200;
+    Parity parity_ = Parity::None;
     uint8_t slave_ = 247;
     int address_offset_ = 0;
     unsigned response_timeout_ms_ = 600;

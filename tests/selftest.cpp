@@ -7,6 +7,7 @@
 
 #include "copra_registers.h"
 #include "modbus_rtu.h"
+#include "product_profiles.h"
 
 namespace {
 int failures = 0;
@@ -61,6 +62,33 @@ int main() {
     check(faults.size() == 2 && faults[0] == "FOC_Duration" &&
               faults[1] == "Over_Current",
           "faults 0x0101 -> FOC_Duration + Over_Current");
+
+    std::printf("Product profiles:\n");
+    const ProductProfile* e360 = find_product("e360");
+    check(e360 != nullptr, "e360 profile exists");
+    check(find_product("E360") != nullptr, "profile lookup is case-insensitive");
+    check(e360 && e360->comm.baud == 19200 &&
+              e360->comm.parity == Parity::Even && e360->comm.address == 11,
+          "e360 comm = 19200 8E1 addr 11");
+    check(!product_profiles().empty() && product_profiles()[0].name == "e360",
+          "e360 is the first profile");
+    // Every register named in a profile must resolve and be writable.
+    bool all_regs_ok = true;
+    for (const ProfileSetting& s : (e360 ? e360->defaults : std::vector<ProfileSetting>{})) {
+        const RegDef* r = find_register(s.reg_name);
+        if (!r || r->space != RegSpace::Holding) all_regs_ok = false;
+    }
+    check(all_regs_ok, "all e360 default registers exist and are writable");
+    // Autoconnect must try the factory default first, then the e360 settings.
+    auto cands = autoconnect_candidates();
+    check(cands.size() >= 2 && cands[0].address == 247 &&
+              cands[0].baud == 115200,
+          "autoconnect tries factory default (115200 8N1 addr 247) first");
+    bool has_e360_comm = false;
+    for (const auto& c : cands)
+        if (c.baud == 19200 && c.parity == Parity::Even && c.address == 11)
+            has_e360_comm = true;
+    check(has_e360_comm, "autoconnect includes the e360 fallback (19200 8E1 addr 11)");
 
     std::printf("\n%s (%d failure%s)\n", failures == 0 ? "ALL PASS" : "FAILED",
                 failures, failures == 1 ? "" : "s");
