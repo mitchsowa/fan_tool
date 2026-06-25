@@ -43,9 +43,24 @@ Source: *COPRA Products Modbus Specification – User Registers, Release 1.0*.
 | `torque` | 48 | s16 | pu | Measured torque |
 | `power` | 49 | s16 | W | Input power |
 | `ipm_temp` | 50 | s16 | °C | IPM temperature |
-| `current_a` | 51 | u16 ×0.01 | mA | Peak phase current Ia |
-| `current_b` | 52 | u16 ×0.01 | mA | Peak phase current Ib |
+| `current_a` | 51 | u16 ×0.01 | A | Peak phase current Ia |
+| `current_b` | 52 | u16 ×0.01 | A | Peak phase current Ib |
 | `shaft_power` | 65 | s16 | W | Shaft power |
+
+## Digital inputs (holding config + input status)
+
+| Name | Addr | Space | Notes |
+|------|------|-------|-------|
+| `din1_function` | 33395 | Holding | DIN1 function: 0 disabled, **1 motor enable**, 2 motor start, 3 set direction, 4 firemode, 5 alarm reset, 6–9 discrete demand 0–3 |
+| `din2_function` | 33396 | Holding | DIN2 function (same enum) |
+| `din3_function` | 33397 | Holding | DIN3 function (same enum) |
+| `din_enable` | 33385 | Holding | Enable bits: b0 = DIN1, b1 = DIN2, b2 = DIN3 (1 = enabled) |
+| `din_polarity` | 33386 | Holding | Polarity bits: 0 = normally open, 1 = normally closed |
+| `din_status` | 33322 | Input | Live filtered input state: b0 DIN1, b1 DIN2, b2 DIN3, b3 PWM |
+
+> ⚠️ A digital input set to **motor enable** overrides the Modbus `start`
+> command — if it is open/inactive the drive stays `IDLE`. To run over Modbus
+> alone, set that input's function to `0`, `save`, and power-cycle.
 
 ## Identity (input)
 
@@ -60,16 +75,25 @@ Source: *COPRA Products Modbus Specification – User Registers, Release 1.0*.
 | Name | Addr | Scale | Notes |
 |------|------|-------|-------|
 | `modbus_baud` | 33897 | 100 | e.g. raw 1152 = 115200 baud |
+| `modbus_parity` | 33900 | 1 | 0 = none, 1 = odd, 2 = even |
+| `modbus_stop_bits` | 33899 | 1 | 1 or 2 stop bits |
 | `modbus_address` | 33902 | 1 | Unit address 1–247 |
 | `hb_timeout` | 33905 | 1 | Modbus loss (heartbeat) timeout, s |
 | `loss_demand` | 33906 | 0.01 | Demand % on Modbus loss |
 
+> The tool polls a register once a second while connected so the `hb_timeout`
+> watchdog never fires (see the README keepalive note).
+
 ## Flash save (per spec §3.4)
 
 To persist holding-register settings: write **1**
-(`FLASH_WRITE_RAM2FLASH_USER_SETTINGS_CMD`) to the command register, then poll
-the status register until **8** (`FLASH_SETTINGS_WRITE_COMPLETE`); **2** =
-`FLASH_ERROR`. Repeat for both app and drive. The `save` command does this.
+(`FLASH_WRITE_RAM2FLASH_USER_SETTINGS_CMD`) to the command register and wait for
+the drive to finish. The firmware races through the transient `*_COMPLETE`
+status codes faster than Modbus polling can sample them and settles on a steady
+healthy state (often `FLASH_CRC_VALID` = 16), so `save` waits for the command
+register to reset to `0` (`FLASH_WAITING_FOR_CMD`) while the status is healthy,
+and treats only the explicit error codes (e.g. **2** `FLASH_ERROR`) as failure.
+Repeat for both app and drive — the `save` command does all of this.
 
 | Name | Addr | Space |
 |------|------|-------|
