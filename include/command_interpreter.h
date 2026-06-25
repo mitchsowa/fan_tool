@@ -42,6 +42,15 @@ public:
     // Execute a single command line. Returns the result (ok / quit).
     CommandResult execute(const std::string& line);
 
+    // Persisted-settings file (default.conf). Setting a path enables auto-save:
+    // the current comm settings are written back after a successful connect.
+    void set_config_path(const std::string& path) { config_path_ = path; }
+    // Load comm settings (port/baud/parity/address/offset/timeout/retries) from
+    // a config file. Returns true if the file existed and was read.
+    bool load_config(const std::string& path);
+    // Write the current comm settings to a config file.
+    void save_config(const std::string& path) const;
+
     // Load a profile from a file (used by the --profile flag). Returns true on
     // success; prints any error to the output stream.
     bool load_profile(const std::string& path);
@@ -80,6 +89,8 @@ private:
     // Read every writable configuration register from the connected fan and
     // write a runnable .fan clone script (writeraw lines + save) to `path`.
     void cmd_dump_settings(const std::string& path);
+    // Write the current settings to config_path_ if one is set (auto-save).
+    void autosave_config();
     // Resolve a profile by name: loaded-from-file profiles first, then a
     // matching <name>.profile / profiles/<name>.profile file, then the
     // compiled-in defaults. Returns false if none match.
@@ -110,6 +121,9 @@ private:
     // Profiles loaded from text files this session (take precedence over the
     // compiled-in defaults).
     std::vector<ProductProfile> loaded_profiles_;
+
+    // Persisted-settings file; empty disables auto-save.
+    std::string config_path_;
 
     int passed_ = 0;
     int failed_ = 0;

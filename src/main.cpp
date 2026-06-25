@@ -34,6 +34,7 @@ void print_usage(const char* prog) {
         "                         defaults to the fan, then exit (e.g. e360)\n"
         "      --profile <file>   Load a product profile from a text file\n"
         "                         (repeatable)\n"
+        "      --config <file>    Persisted settings file (default default.conf)\n"
         "      --list-products    List available product profiles and exit\n"
         "  -i, --menu             Text menu interface (default when no script)\n"
         "      --shell            Raw command shell instead of the menu\n"
@@ -62,6 +63,11 @@ int main(int argc, char** argv) {
     std::string program_product;
     std::string script_path;
     std::vector<std::string> profile_files;
+    std::string config_path = "default.conf";
+    // Track which connection flags were given so they override the config file
+    // (which in turn overrides the built-in defaults).
+    bool baud_set = false, parity_set = false, address_set = false,
+         offset_set = false;
 
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
@@ -79,16 +85,22 @@ int main(int argc, char** argv) {
             port = next("--port");
         } else if (arg == "-b" || arg == "--baud") {
             baud = static_cast<unsigned>(std::stoul(next("--baud")));
+            baud_set = true;
         } else if (arg == "--parity") {
             std::string p = next("--parity");
             if (p == "n" || p == "none") parity = fan::Parity::None;
             else if (p == "e" || p == "even") parity = fan::Parity::Even;
             else if (p == "o" || p == "odd") parity = fan::Parity::Odd;
             else { std::cerr << "error: bad parity '" << p << "'\n"; return 2; }
+            parity_set = true;
         } else if (arg == "-a" || arg == "--address") {
             address = std::stoi(next("--address"));
+            address_set = true;
         } else if (arg == "-o" || arg == "--offset") {
             offset = std::stoi(next("--offset"));
+            offset_set = true;
+        } else if (arg == "--config") {
+            config_path = next("--config");
         } else if (arg == "--autoconnect") {
             autoconnect = true;
         } else if (arg == "--program") {
@@ -123,11 +135,15 @@ int main(int argc, char** argv) {
     bool run_as_script = !script_path.empty() && !interactive;
 
     fan::CommandInterpreter interp(std::cout, /*interactive=*/!run_as_script);
+    // Persisted settings load first (so a saved port/baud comes back on restart),
+    // then any explicit command-line flags override them.
+    interp.set_config_path(config_path);
+    interp.load_config(config_path);
     if (!port.empty()) interp.set_default_port(port);
-    interp.set_default_baud(baud);
-    interp.set_default_parity(parity);
-    interp.set_default_address(static_cast<uint8_t>(address));
-    interp.set_default_offset(offset);
+    if (baud_set) interp.set_default_baud(baud);
+    if (parity_set) interp.set_default_parity(parity);
+    if (address_set) interp.set_default_address(static_cast<uint8_t>(address));
+    if (offset_set) interp.set_default_offset(offset);
     interp.set_abort_on_failure(abort_on_fail);
 
     // Load any profile files supplied on the command line.
@@ -162,16 +178,15 @@ int main(int argc, char** argv) {
     if (!shell) {
         // Default interactive experience: the text menu.
         fan::run_menu(interp, std::cin, std::cout);
+        interp.save_config(config_path);  // persist settings for next launch
         return 0;
     }
 
     // Raw command shell (--shell).
     std::cout << "COPRA fan tool - command shell. Type 'help' for commands, "
                  "'quit' to exit.\n";
-    if (!port.empty()) {
-        std::cout << "(port " << port << " @ " << baud << ", address " << address
-                  << " - type 'connect' to open)\n";
-    }
+    std::cout << "(" << interp.connection_info()
+              << " - type 'connect' to open)\n";
     std::string line;
     while (true) {
         std::cout << "fan> " << std::flush;
@@ -179,6 +194,7 @@ int main(int argc, char** argv) {
         fan::CommandResult r = interp.execute(line);
         if (r.quit) break;
     }
+    interp.save_config(config_path);  // persist settings for next launch
     std::cout << "Bye.\n";
     return 0;
 }

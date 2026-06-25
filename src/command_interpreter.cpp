@@ -97,6 +97,7 @@ void CommandInterpreter::cmd_connect() {
     out_ << "Connected to " << port_name_ << " @ " << baud_ << " 8"
          << (parity_ == Parity::None ? "N" : parity_ == Parity::Even ? "E" : "O")
          << "1, slave address " << static_cast<int>(slave_) << "\n";
+    autosave_config();  // remember the working settings for next launch
 }
 
 bool CommandInterpreter::try_connect(const CommSettings& comm) {
@@ -129,6 +130,7 @@ bool CommandInterpreter::try_connect(const CommSettings& comm) {
     connected_ = true;
     master_.set_response_timeout_ms(response_timeout_ms_);
     master_.set_retries(retries_);
+    autosave_config();  // remember the discovered settings for next launch
     return true;
 }
 
@@ -236,6 +238,68 @@ void CommandInterpreter::cmd_dump_settings(const std::string& path) {
 
     out_ << "Wrote " << count << " settings to '" << path << "'.\n";
     out_ << "Reload on another fan with:  fan_tool -p <port> " << path << "\n";
+}
+
+bool CommandInterpreter::load_config(const std::string& path) {
+    std::ifstream file(path);
+    if (!file) return false;  // no file yet - first run
+    auto trim = [](std::string s) {
+        size_t b = s.find_first_not_of(" \t\r\n");
+        size_t e = s.find_last_not_of(" \t\r\n");
+        return (b == std::string::npos) ? std::string() : s.substr(b, e - b + 1);
+    };
+    std::string line;
+    while (std::getline(file, line)) {
+        line = strip_comment(line);
+        size_t eq = line.find('=');
+        if (eq == std::string::npos) continue;
+        std::string key = to_lower(trim(line.substr(0, eq)));
+        std::string val = trim(line.substr(eq + 1));
+        if (val.empty()) continue;
+        long n;
+        if (key == "port") {
+            port_name_ = val;
+        } else if (key == "baud") {
+            if (parse_long(val, n) && n > 0) baud_ = static_cast<unsigned>(n);
+        } else if (key == "parity") {
+            std::string p = to_lower(val);
+            if (p == "none" || p == "n") parity_ = Parity::None;
+            else if (p == "even" || p == "e") parity_ = Parity::Even;
+            else if (p == "odd" || p == "o") parity_ = Parity::Odd;
+        } else if (key == "address") {
+            if (parse_long(val, n) && n >= 0 && n <= 247)
+                slave_ = static_cast<uint8_t>(n);
+        } else if (key == "offset") {
+            if (parse_long(val, n)) address_offset_ = static_cast<int>(n);
+        } else if (key == "timeout") {
+            if (parse_long(val, n) && n > 0)
+                response_timeout_ms_ = static_cast<unsigned>(n);
+        } else if (key == "retries") {
+            if (parse_long(val, n) && n >= 0)
+                retries_ = static_cast<unsigned>(n);
+        }
+    }
+    return true;
+}
+
+void CommandInterpreter::save_config(const std::string& path) const {
+    std::ofstream file(path);
+    if (!file) return;  // best-effort; do not disrupt the session
+    const char* parity = parity_ == Parity::None ? "none"
+                       : parity_ == Parity::Even ? "even" : "odd";
+    file << "# fan_tool persisted settings (auto-saved on connect/exit).\n";
+    file << "# Loaded on startup; command-line flags override these values.\n\n";
+    if (!port_name_.empty()) file << "port = " << port_name_ << "\n";
+    file << "baud = " << baud_ << "\n";
+    file << "parity = " << parity << "      # none | even | odd\n";
+    file << "address = " << static_cast<int>(slave_) << "\n";
+    file << "offset = " << address_offset_ << "\n";
+    file << "timeout = " << response_timeout_ms_ << "\n";
+    file << "retries = " << retries_ << "\n";
+}
+
+void CommandInterpreter::autosave_config() {
+    if (!config_path_.empty()) save_config(config_path_);
 }
 
 bool CommandInterpreter::resolve_profile(const std::string& name,

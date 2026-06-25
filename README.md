@@ -74,6 +74,7 @@ fan_tool [options] [script.fan]
       --parity <n|e|o>   Parity: none/even/odd (default none)
   -a, --address <n>      Modbus slave address 0-247 (default 247)
   -o, --offset <n>       Register address offset (default 0; see note below)
+      --config <file>    Persisted settings file (default default.conf)
       --autoconnect      Probe known comm settings until the fan responds
       --program <name>   Auto-connect, program a product profile, then exit
       --list-products    List available product profiles and exit
@@ -128,6 +129,35 @@ set hb_timeout       = 20
 Register names are those from `list` / `docs/REGISTERS.md`. To add a new
 product, copy `e360.profile` to `profiles/<name>.profile` and edit it — no code
 changes needed.
+
+### Persisted settings (`default.conf`)
+
+The tool remembers your connection settings between runs. On startup it reads
+**`default.conf`** (from the current directory, or `--config <file>`) and, after
+a successful connect — and on exit — writes the current **port, baud, parity,
+address, offset, timeout and retries** back to it. So once you've connected to a
+fan, the next launch comes up pointing at the same port and comm settings with
+no flags:
+
+```bash
+fan_tool                 # loads default.conf; just pick Connect
+```
+
+Command-line flags (`--port`, `--baud`, …) override the file for that run. The
+file is plain `key = value` text you can edit by hand:
+
+```
+# default.conf
+port = /dev/ttyUSB0
+baud = 19200
+parity = even      # none | even | odd
+address = 11
+offset = 0
+timeout = 600
+retries = 2
+```
+
+`default.conf` is per-machine runtime state and is git-ignored.
 
 ### Clone a fan's settings onto another fan
 
