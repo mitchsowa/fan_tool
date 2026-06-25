@@ -7,9 +7,12 @@
 #ifndef FAN_TOOL_COMMAND_INTERPRETER_H
 #define FAN_TOOL_COMMAND_INTERPRETER_H
 
+#include <condition_variable>
 #include <cstdint>
 #include <iosfwd>
+#include <mutex>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "fan_controller.h"
@@ -29,6 +32,7 @@ public:
     // Output goes to `out`; the interactive shell passes std::cout. `interactive`
     // enables REPL-only behaviour (e.g. the `pause` command).
     explicit CommandInterpreter(std::ostream& out, bool interactive = false);
+    ~CommandInterpreter();
 
     // Pre-seed connection parameters (from command-line flags) before any
     // script runs. These are overridden by in-script commands.
@@ -91,6 +95,13 @@ private:
     void cmd_dump_settings(const std::string& path);
     // Write the current settings to config_path_ if one is set (auto-save).
     void autosave_config();
+
+    // Background keepalive: while connected (interactive only), poll a register
+    // once a second so the fan's Modbus comm-loss watchdog never fires and
+    // reverts the demand. Serialized with command execution via bus_mutex_.
+    void start_keepalive();
+    void stop_keepalive();
+    void keepalive_loop();
     // Resolve a profile by name: loaded-from-file profiles first, then a
     // matching <name>.profile / profiles/<name>.profile file, then the
     // compiled-in defaults. Returns false if none match.
@@ -124,6 +135,15 @@ private:
 
     // Persisted-settings file; empty disables auto-save.
     std::string config_path_;
+
+    // Serializes all serial-bus access between command execution and the
+    // background keepalive poll so frames never interleave on the half-duplex
+    // line. execute() holds it for its duration; keepalive uses try-lock.
+    std::mutex bus_mutex_;
+    std::thread keepalive_thread_;
+    std::mutex keepalive_mutex_;
+    std::condition_variable keepalive_cv_;
+    bool keepalive_quit_ = false;
 
     int passed_ = 0;
     int failed_ = 0;

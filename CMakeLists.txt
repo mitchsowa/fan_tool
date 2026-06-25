@@ -28,6 +28,10 @@ add_library(fan_core
 )
 target_include_directories(fan_core PUBLIC include)
 
+# The command interpreter runs a background keepalive thread.
+find_package(Threads REQUIRED)
+target_link_libraries(fan_core PUBLIC Threads::Threads)
+
 # The two serial backends guard their own bodies with #ifdef, so it is safe to
 # compile both on every platform; only the matching one produces code.
 

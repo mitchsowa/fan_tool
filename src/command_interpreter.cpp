@@ -4,9 +4,11 @@
 #include <algorithm>
 #include <cctype>
 #include <chrono>
+#include <condition_variable>
 #include <cstdint>
 #include <fstream>
 #include <iostream>
+#include <mutex>
 #include <sstream>
 #include <thread>
 #include <vector>
@@ -69,6 +71,49 @@ CommandInterpreter::CommandInterpreter(std::ostream& out, bool interactive)
     : out_(out), interactive_(interactive), master_(port_),
       controller_(master_) {}
 
+CommandInterpreter::~CommandInterpreter() { stop_keepalive(); }
+
+void CommandInterpreter::start_keepalive() {
+    if (!interactive_) return;             // scripts/tests drive their own timing
+    if (keepalive_thread_.joinable()) return;  // already running
+    {
+        std::lock_guard<std::mutex> lk(keepalive_mutex_);
+        keepalive_quit_ = false;
+    }
+    keepalive_thread_ = std::thread([this] { keepalive_loop(); });
+}
+
+void CommandInterpreter::stop_keepalive() {
+    if (!keepalive_thread_.joinable()) return;
+    {
+        std::lock_guard<std::mutex> lk(keepalive_mutex_);
+        keepalive_quit_ = true;
+    }
+    keepalive_cv_.notify_all();
+    keepalive_thread_.join();
+}
+
+void CommandInterpreter::keepalive_loop() {
+    using namespace std::chrono_literals;
+    while (true) {
+        {
+            std::unique_lock<std::mutex> lk(keepalive_mutex_);
+            keepalive_cv_.wait_for(lk, 1s, [this] { return keepalive_quit_; });
+            if (keepalive_quit_) return;
+        }
+        // Best-effort poll: skip this tick if a command currently owns the bus
+        // (try-lock never blocks, so stop_keepalive() can never deadlock here).
+        std::unique_lock<std::mutex> bus(bus_mutex_, std::try_to_lock);
+        if (bus.owns_lock() && connected_) {
+            try {
+                master_.read_input(reg::kMcState, 1);  // resets comm-loss timer
+            } catch (...) {
+                // Ignore transient errors; never disturb the interactive prompt.
+            }
+        }
+    }
+}
+
 void CommandInterpreter::apply_master_config() {
     master_.set_slave_address(slave_);
     master_.set_address_offset(address_offset_);
@@ -86,6 +131,7 @@ void CommandInterpreter::cmd_connect() {
     if (port_name_.empty()) {
         throw std::runtime_error("no serial port set - use 'port <device>'");
     }
+    stop_keepalive();  // stop polling an old connection before reopening
     if (connected_) port_.close();
 
     SerialConfig cfg;
@@ -98,6 +144,7 @@ void CommandInterpreter::cmd_connect() {
          << (parity_ == Parity::None ? "N" : parity_ == Parity::Even ? "E" : "O")
          << "1, slave address " << static_cast<int>(slave_) << "\n";
     autosave_config();  // remember the working settings for next launch
+    start_keepalive();  // keep the fan's comm-loss watchdog from firing
 }
 
 bool CommandInterpreter::try_connect(const CommSettings& comm) {
@@ -135,6 +182,7 @@ bool CommandInterpreter::try_connect(const CommSettings& comm) {
 }
 
 void CommandInterpreter::cmd_autoconnect() {
+    stop_keepalive();  // pause polling while we probe comm settings
     out_ << "Auto-connecting on " << port_name_ << " ...\n";
     // Try the currently-configured settings first, then the known candidates
     // (factory default, then each product profile's operating settings),
@@ -154,6 +202,7 @@ void CommandInterpreter::cmd_autoconnect() {
         if (try_connect(c)) {
             out_ << "OK\n";
             out_ << "Connected at " << c.str() << "\n";
+            start_keepalive();  // keep the comm-loss watchdog from firing
             return;
         }
         out_ << "no response\n";
@@ -418,6 +467,7 @@ std::string CommandInterpreter::connection_info() const {
 }
 
 void CommandInterpreter::cmd_disconnect() {
+    stop_keepalive();
     if (connected_) {
         port_.close();
         connected_ = false;
@@ -458,6 +508,10 @@ void CommandInterpreter::print_status(const FanStatus& s) {
 }
 
 CommandResult CommandInterpreter::execute(const std::string& raw_line) {
+    // Hold the bus for the whole command so the background keepalive poll never
+    // interleaves a frame on the half-duplex line.
+    std::lock_guard<std::mutex> bus_lock(bus_mutex_);
+
     std::string line = strip_comment(raw_line);
     if (line.empty()) return {};
 

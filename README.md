@@ -366,6 +366,13 @@ connectivity check.
 > must re-issue them on startup. `save` persists the configuration registers
 > (direction, priorities, Modbus settings).
 
+> **Keepalive:** the COPRA has a Modbus comm-loss watchdog (`hb_timeout`, default
+> 20 s) that reverts the demand to `loss_demand` (often 0 %, i.e. it stops) if no
+> traffic arrives. While connected interactively, the tool polls a register once
+> a second in the background so the watchdog never fires — the fan keeps running
+> while you sit at the menu. Reads are serialized with your commands, so they
+> never collide on the half-duplex bus.
+
 ---
 
 ## A note on register addressing
