@@ -3,6 +3,8 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <sstream>
+#include <string>
 #include <vector>
 
 #include "copra_registers.h"
@@ -89,6 +91,47 @@ int main() {
         if (c.baud == 19200 && c.parity == Parity::Even && c.address == 11)
             has_e360_comm = true;
     check(has_e360_comm, "autoconnect includes the e360 fallback (19200 8E1 addr 11)");
+
+    std::printf("Profile file parsing:\n");
+    {
+        const char* text =
+            "# sample\n"
+            "name = test360\n"
+            "description = test fan\n"
+            "comm.baud = 19200\n"
+            "comm.parity = even\n"
+            "comm.address = 11\n"
+            "save_to_flash = true\n"
+            "set direction = 9   # STD\n"
+            "set modbus_address = 11\n";
+        std::istringstream in(text);
+        ProductProfile p;
+        std::string err;
+        bool ok = parse_profile(in, p, err);
+        check(ok, "valid profile parses");
+        check(p.name == "test360", "parsed name");
+        check(p.comm.baud == 19200 && p.comm.parity == Parity::Even &&
+                  p.comm.address == 11,
+              "parsed comm settings");
+        check(p.defaults.size() == 2 && p.defaults[0].reg_name == "direction" &&
+                  p.defaults[0].value == 9.0,
+              "parsed register defaults");
+        check(p.comm_changes, "comm_changes inferred from modbus_* default");
+    }
+    {
+        std::istringstream in("name = bad\ncomm.parity = purple\nset x = 1\n");
+        ProductProfile p;
+        std::string err;
+        check(!parse_profile(in, p, err), "invalid parity rejected");
+        check(err.find("line 2") != std::string::npos,
+              "error names the offending line");
+    }
+    {
+        std::istringstream in("description = no name\nset direction = 9\n");
+        ProductProfile p;
+        std::string err;
+        check(!parse_profile(in, p, err), "missing name rejected");
+    }
 
     std::printf("\n%s (%d failure%s)\n", failures == 0 ? "ALL PASS" : "FAILED",
                 failures, failures == 1 ? "" : "s");

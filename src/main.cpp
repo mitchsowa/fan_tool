@@ -10,8 +10,10 @@
 #include <fstream>
 #include <iostream>
 #include <string>
+#include <vector>
 
 #include "command_interpreter.h"
+#include "menu.h"
 #include "product_profiles.h"
 
 namespace {
@@ -30,14 +32,18 @@ void print_usage(const char* prog) {
         "                         each product) until the fan responds\n"
         "      --program <name>   Auto-connect, program a product profile's\n"
         "                         defaults to the fan, then exit (e.g. e360)\n"
+        "      --profile <file>   Load a product profile from a text file\n"
+        "                         (repeatable)\n"
         "      --list-products    List available product profiles and exit\n"
-        "  -i, --interactive      Force interactive shell even with a script\n"
+        "  -i, --menu             Text menu interface (default when no script)\n"
+        "      --shell            Raw command shell instead of the menu\n"
         "      --abort-on-fail    Stop the script at the first failed assertion\n"
         "  -h, --help             Show this help\n\n"
         "Examples:\n"
+        "  " << prog << " -p /dev/ttyUSB0                 (text menu)\n"
         "  " << prog << " -p /dev/ttyUSB0 commission.fan\n"
         "  " << prog << " -p /dev/ttyUSB0 --program e360\n"
-        "  " << prog << " -p /dev/ttyUSB0 --autoconnect -i\n"
+        "  " << prog << " -p /dev/ttyUSB0 --profile profiles/e360.profile -i\n"
         "  " << prog << " --list-products\n";
 }
 
@@ -50,10 +56,12 @@ int main(int argc, char** argv) {
     int address = 247;
     int offset = 0;
     bool interactive = false;
+    bool shell = false;
     bool abort_on_fail = false;
     bool autoconnect = false;
     std::string program_product;
     std::string script_path;
+    std::vector<std::string> profile_files;
 
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
@@ -85,12 +93,17 @@ int main(int argc, char** argv) {
             autoconnect = true;
         } else if (arg == "--program") {
             program_product = next("--program");
+        } else if (arg == "--profile") {
+            profile_files.push_back(next("--profile"));
         } else if (arg == "--list-products") {
             fan::CommandInterpreter tmp(std::cout, false);
             tmp.execute("products");
             return 0;
-        } else if (arg == "-i" || arg == "--interactive") {
+        } else if (arg == "-i" || arg == "--interactive" || arg == "--menu") {
             interactive = true;
+        } else if (arg == "--shell") {
+            interactive = true;
+            shell = true;
         } else if (arg == "--abort-on-fail") {
             abort_on_fail = true;
         } else if (!arg.empty() && arg[0] == '-') {
@@ -117,6 +130,9 @@ int main(int argc, char** argv) {
     interp.set_default_offset(offset);
     interp.set_abort_on_failure(abort_on_fail);
 
+    // Load any profile files supplied on the command line.
+    for (const std::string& pf : profile_files) interp.load_profile(pf);
+
     // --program <product>: auto-connect, program the profile, then exit.
     if (!program_product.empty()) {
         if (port.empty()) {
@@ -141,14 +157,21 @@ int main(int argc, char** argv) {
         return interp.run_script(file);
     }
 
-    // Interactive shell.
-    std::cout << "COPRA fan tool - interactive shell. Type 'help' for commands, "
+    if (autoconnect) interp.execute("autoconnect");
+
+    if (!shell) {
+        // Default interactive experience: the text menu.
+        fan::run_menu(interp, std::cin, std::cout);
+        return 0;
+    }
+
+    // Raw command shell (--shell).
+    std::cout << "COPRA fan tool - command shell. Type 'help' for commands, "
                  "'quit' to exit.\n";
     if (!port.empty()) {
         std::cout << "(port " << port << " @ " << baud << ", address " << address
                   << " - type 'connect' to open)\n";
     }
-    if (autoconnect) interp.execute("autoconnect");
     std::string line;
     while (true) {
         std::cout << "fan> " << std::flush;

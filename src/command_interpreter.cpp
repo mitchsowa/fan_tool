@@ -144,7 +144,7 @@ void CommandInterpreter::cmd_autoconnect() {
         tries.push_back(c);
     };
     add(CommSettings{baud_, parity_, slave_});
-    for (const CommSettings& c : autoconnect_candidates()) add(c);
+    for (const CommSettings& c : autoconnect_candidates(loaded_profiles_)) add(c);
 
     for (const CommSettings& c : tries) {
         out_ << "  trying " << c.str() << " ... ";
@@ -161,25 +161,91 @@ void CommandInterpreter::cmd_autoconnect() {
 
 void CommandInterpreter::cmd_list_products() {
     out_ << "Available product profiles:\n";
-    for (const ProductProfile& p : product_profiles()) {
-        out_ << "  " << p.name << "  - " << p.description << "\n";
-        out_ << "      comm after programming: " << p.comm.str() << "\n";
-        out_ << "      programs " << p.defaults.size()
-             << " register(s)" << (p.save_to_flash ? ", saved to flash" : "")
-             << "\n";
+    for (const ProductProfile& p : loaded_profiles_) {
+        out_ << "  " << p.name << "  - " << p.description << "   [loaded from file]\n";
+        out_ << "      comm after programming: " << p.comm.str() << ", "
+             << p.defaults.size() << " register(s)\n";
     }
+    for (const ProductProfile& p : product_profiles()) {
+        // Skip a built-in that a loaded profile of the same name shadows.
+        bool shadowed = false;
+        for (const ProductProfile& l : loaded_profiles_)
+            if (l.name == p.name) shadowed = true;
+        if (shadowed) continue;
+        out_ << "  " << p.name << "  - " << p.description << "   [built-in]\n";
+        out_ << "      comm after programming: " << p.comm.str() << ", "
+             << p.defaults.size() << " register(s)"
+             << (p.save_to_flash ? ", saved to flash" : "") << "\n";
+    }
+    out_ << "Load more with 'loadprofile <file>'.\n";
+}
+
+bool CommandInterpreter::resolve_profile(const std::string& name,
+                                         ProductProfile& out) {
+    // 1) Already loaded from a file this session.
+    for (const ProductProfile& p : loaded_profiles_) {
+        if (p.name == name) { out = p; return true; }
+    }
+    // 2) A matching profile file on disk.
+    std::vector<std::string> candidates;
+    if (name.find('/') != std::string::npos ||
+        name.size() > 8 /* maybe ends in .profile */) {
+        candidates.push_back(name);
+    }
+    candidates.push_back(name + ".profile");
+    candidates.push_back("profiles/" + name + ".profile");
+    for (const std::string& path : candidates) {
+        ProductProfile p;
+        std::string err;
+        if (load_profile_file(path, p, err)) {
+            out_ << "  (loaded profile from " << path << ")\n";
+            loaded_profiles_.push_back(p);  // cache for the session
+            out = p;
+            return true;
+        }
+    }
+    // 3) Compiled-in default.
+    const ProductProfile* b = find_product(name);
+    if (b) { out = *b; return true; }
+    return false;
+}
+
+void CommandInterpreter::cmd_load_profile(const std::string& path) {
+    ProductProfile p;
+    std::string err;
+    if (!load_profile_file(path, p, err)) {
+        throw std::runtime_error("profile load failed: " + err);
+    }
+    // Warn (but don't fail) on register names that won't resolve when programmed.
+    int unknown = 0;
+    for (const ProfileSetting& s : p.defaults) {
+        const RegDef* reg = find_register(s.reg_name);
+        if (!reg) { out_ << "  WARNING: unknown register '" << s.reg_name
+                         << "'\n"; ++unknown; }
+        else if (reg->space != RegSpace::Holding)
+            out_ << "  WARNING: '" << s.reg_name << "' is read-only\n";
+    }
+    // Replace any existing profile of the same name.
+    loaded_profiles_.erase(
+        std::remove_if(loaded_profiles_.begin(), loaded_profiles_.end(),
+                       [&](const ProductProfile& e) { return e.name == p.name; }),
+        loaded_profiles_.end());
+    loaded_profiles_.push_back(p);
+    out_ << "Loaded profile '" << p.name << "' (" << p.defaults.size()
+         << " register(s), comm " << p.comm.str() << ")"
+         << (unknown ? " with warnings" : "") << "\n";
 }
 
 void CommandInterpreter::cmd_program(const std::string& product) {
     ensure_connected();
-    const ProductProfile* p = find_product(product);
-    if (!p) {
+    ProductProfile p;
+    if (!resolve_profile(product, p)) {
         throw std::runtime_error("unknown product '" + product +
-                                 "' (try 'products')");
+                                 "' (try 'products' or 'loadprofile <file>')");
     }
-    out_ << "Programming '" << p->name << "' defaults into the fan:\n";
+    out_ << "Programming '" << p.name << "' defaults into the fan:\n";
     int written = 0;
-    for (const ProfileSetting& s : p->defaults) {
+    for (const ProfileSetting& s : p.defaults) {
         const RegDef* reg = find_register(s.reg_name);
         if (!reg) {
             record(false, "unknown register '" + s.reg_name + "' in profile");
@@ -191,23 +257,42 @@ void CommandInterpreter::cmd_program(const std::string& product) {
         if (!s.note.empty()) out_ << "   (" << s.note << ")";
         out_ << "\n";
     }
-    out_ << "  wrote " << written << " of " << p->defaults.size()
+    out_ << "  wrote " << written << " of " << p.defaults.size()
          << " register(s)\n";
 
-    if (p->save_to_flash) {
+    if (p.save_to_flash) {
         out_ << "  saving to flash (app + drive)...\n";
         controller_.save_settings();
         out_ << "  saved.\n";
     }
-    record(written == static_cast<int>(p->defaults.size()),
-           "programmed product '" + p->name + "'");
+    record(written == static_cast<int>(p.defaults.size()),
+           "programmed product '" + p.name + "'");
 
-    if (p->comm_changes) {
+    if (p.comm_changes) {
         out_ << "\n  NOTE: communication settings (baud/parity/address) take "
                 "effect after a POWER CYCLE.\n";
-        out_ << "  After power-cycling, reconnect at: " << p->comm.str() << "\n";
+        out_ << "  After power-cycling, reconnect at: " << p.comm.str() << "\n";
         out_ << "  (or just run 'autoconnect').\n";
     }
+}
+
+bool CommandInterpreter::load_profile(const std::string& path) {
+    try {
+        cmd_load_profile(path);
+        return true;
+    } catch (const std::exception& e) {
+        out_ << "  ERROR: " << e.what() << "\n";
+        return false;
+    }
+}
+
+std::string CommandInterpreter::connection_info() const {
+    std::string port = port_name_.empty() ? "(no port)" : port_name_;
+    if (!connected_) return port + "  [NOT CONNECTED]";
+    const char* par =
+        parity_ == Parity::None ? "N" : parity_ == Parity::Even ? "E" : "O";
+    return port + "  [CONNECTED " + std::to_string(baud_) + " 8" + par + "1, addr " +
+           std::to_string(slave_) + "]";
 }
 
 void CommandInterpreter::cmd_disconnect() {
@@ -264,7 +349,7 @@ CommandResult CommandInterpreter::execute(const std::string& raw_line) {
                 "Connection : port <dev> [baud] | baud <n> | parity <n|e|o> |\n"
                 "             address <n> | offset <n> | timeout <ms> | retries <n> |\n"
                 "             connect | autoconnect | disconnect\n"
-                "Products   : products | program <name>\n"
+                "Products   : products | loadprofile <file> | program <name>\n"
                 "Identity   : identify | status | monitor [count] [interval_s]\n"
                 "Control    : setspeed <rpm> | setdemand <pct> | start | stop |\n"
                 "             direction <std|reverse> | forcemodbus | save\n"
@@ -324,6 +409,9 @@ CommandResult CommandInterpreter::execute(const std::string& raw_line) {
         } else if (cmd == "program") {
             if (args.size() < 2) throw std::runtime_error("usage: program <product>");
             cmd_program(args[1]);
+        } else if (cmd == "loadprofile") {
+            if (args.size() < 2) throw std::runtime_error("usage: loadprofile <file>");
+            cmd_load_profile(args[1]);
         } else if (cmd == "identify") {
             ensure_connected();
             FanIdentity id = controller_.identify();

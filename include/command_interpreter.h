@@ -10,6 +10,7 @@
 #include <cstdint>
 #include <iosfwd>
 #include <string>
+#include <vector>
 
 #include "fan_controller.h"
 #include "modbus_rtu.h"
@@ -41,6 +42,14 @@ public:
     // Execute a single command line. Returns the result (ok / quit).
     CommandResult execute(const std::string& line);
 
+    // Load a profile from a file (used by the --profile flag). Returns true on
+    // success; prints any error to the output stream.
+    bool load_profile(const std::string& path);
+
+    // State accessors (used by the text menu front-end).
+    bool connected() const { return connected_; }
+    std::string connection_info() const;
+
     // Run every line of a stream as a script. Returns the process exit code:
     // 0 if all assertions passed and no fatal error occurred, 1 otherwise.
     int run_script(std::istream& in);
@@ -66,6 +75,11 @@ private:
     // Program a product profile's defaults into the connected fan.
     void cmd_program(const std::string& product);
     void cmd_list_products();
+    void cmd_load_profile(const std::string& path);
+    // Resolve a profile by name: loaded-from-file profiles first, then a
+    // matching <name>.profile / profiles/<name>.profile file, then the
+    // compiled-in defaults. Returns false if none match.
+    bool resolve_profile(const std::string& name, ProductProfile& out);
 
     // Helpers.
     void print_status(const FanStatus& s);
@@ -88,6 +102,10 @@ private:
     int address_offset_ = 0;
     unsigned response_timeout_ms_ = 600;
     unsigned retries_ = 2;
+
+    // Profiles loaded from text files this session (take precedence over the
+    // compiled-in defaults).
+    std::vector<ProductProfile> loaded_profiles_;
 
     int passed_ = 0;
     int failed_ = 0;

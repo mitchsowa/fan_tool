@@ -22,6 +22,7 @@ add_library(fan_core
     src/product_profiles.cpp
     src/fan_controller.cpp
     src/command_interpreter.cpp
+    src/menu.cpp
     src/serial_port_posix.cpp
     src/serial_port_win.cpp
 )

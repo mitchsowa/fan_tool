@@ -101,6 +101,34 @@ flash, and reminds you that comm-setting changes require a **power cycle**.
 In a script or the shell the same is available as `products` and `program
 <name>` (see [`scripts/program_e360.fan`](scripts/program_e360.fan)).
 
+#### Profiles are editable text files
+
+A profile is a plain text file (see [`profiles/e360.profile`](profiles/e360.profile)).
+`program e360` looks for `profiles/e360.profile` (then `e360.profile`) before
+falling back to the compiled-in defaults, so you tune a product **without
+rebuilding** — just edit the file. Load one explicitly with `--profile <file>`,
+the `loadprofile <file>` command, or menu item 15.
+
+```
+# profiles/e360.profile
+name        = e360
+description = e360 plenum fan
+comm.baud    = 19200
+comm.parity  = even          # none | even | odd
+comm.address = 11
+save_to_flash = true
+
+set modbus_baud      = 19200  # set <register> = <value>   [# note]
+set modbus_parity    = 2      # 0=none 1=odd 2=even
+set modbus_address   = 11
+set direction        = 9      # 9 = STD/CCW
+set modbus_priority  = 1
+set hb_timeout       = 20
+```
+Register names are those from `list` / `docs/REGISTERS.md`. To add a new
+product, copy `e360.profile` to `profiles/<name>.profile` and edit it — no code
+changes needed.
+
 ### Auto-connect / comm fallback
 
 If a fan does not answer at the default settings, `autoconnect` (or
@@ -134,16 +162,49 @@ The tool prints each step and a final summary. **Exit code is 0 if every
 assertion passed, 1 otherwise** — so it drops straight into a CI pipeline or a
 production test jig.
 
-### Interactive shell
+### Text menu (default interactive mode)
+
+Running with a port but no script drops you into a numbered text menu:
 
 ```bash
-fan_tool --port /dev/ttyUSB0 -i
-fan> connect
+fan_tool --port /dev/ttyUSB0
+```
+```
+========================================================
+  COPRA EC Fan - Test & Commissioning Tool
+  /dev/ttyUSB0  [NOT CONNECTED]
+========================================================
+  Connection                Control
+    1) Configure port/comm    8) Set speed (RPM)
+    2) Auto-connect           9) Set demand (%)
+    3) Connect               10) Start motor
+    4) Disconnect            11) Stop motor
+                             12) Set direction
+  Information                13) Force Modbus source
+    5) Identify fan
+    6) Show status          Products / commissioning
+    7) Monitor (live)        14) List product profiles
+                             15) Load profile from file
+  Other                      16) Program a profile
+   18) Run test script (.fan) 17) Save settings to flash
+   19) Command prompt (advanced)
+    0) Quit
+  Select:
+```
+Each item prompts for any values it needs. Menu item **19** drops to the raw
+command prompt; every menu action just runs the matching command, so behaviour
+is identical to scripts.
+
+### Command shell
+
+For power users, `--shell` gives the raw one-command-per-line prompt:
+
+```bash
+fan_tool --port /dev/ttyUSB0 --shell
+fan> autoconnect
 fan> identify
 fan> setspeed 1500
 fan> start
-fan> status
-fan> stop
 fan> quit
 ```
 
@@ -253,11 +314,13 @@ Two hardware-free test suites run under `ctest`:
 
 ```
 include/   serial_port.h  modbus_rtu.h  copra_registers.h
-           fan_controller.h  command_interpreter.h
+           product_profiles.h  fan_controller.h
+           command_interpreter.h  menu.h
 src/       serial_port_posix.cpp  serial_port_win.cpp
-           modbus_rtu.cpp  copra_registers.cpp
-           fan_controller.cpp  command_interpreter.cpp  main.cpp
-scripts/   commission.fan  smoke.fan
+           modbus_rtu.cpp  copra_registers.cpp  product_profiles.cpp
+           fan_controller.cpp  command_interpreter.cpp  menu.cpp  main.cpp
+profiles/  e360.profile                  (editable product profiles)
+scripts/   commission.fan  smoke.fan  program_e360.fan
 tests/     selftest.cpp  loopback_test.cpp
 docs/      REGISTERS.md
 ```
