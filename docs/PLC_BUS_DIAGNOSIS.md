@@ -8,7 +8,38 @@ master) drove the COPRA fan (slave, address 11). The sniffer opened the port
 - **Capture:** 10 s, 7370 raw bytes, **800 frames decoded, 0 exceptions,
   2 bytes skipped** (the partial frame present at capture start)
 
-## Verdict
+## ✅ Resolved (2026-06-29)
+
+The PLC now drives the fan correctly. Three fixes were applied and confirmed
+live on the bus:
+
+| Fix | Before | After |
+|---|---|---|
+| Command writes | shifted −1 (START landed in `cmd_demand`) | **35945/46/47/48 correct** |
+| Status reads | shifted +1 (42-based block) | **back to 41 / 569 / 571** |
+| Demand scaling | `cmd_demand` = 40 (= 0.40 %) | **4000 (= 40 %)** |
+
+With correct addressing and a real demand value, the fan spun up immediately —
+captured straight off the bus:
+
+```
+[41] mc_state   = 6     → RUN
+[44] app_state  = 5
+[45] direction  = 9     (STD)
+[46] bus_voltage= ~680 V
+[47] speed      = 666 RPM
+[49] power      = ~278 W
+[50] ipm_temp   = 27 °C
+[51] current_a  = ~1.1 A (climbing as it loads)
+```
+
+The demand-source question resolved itself: the fan's active source was already
+MODBUS (set in an earlier commissioning session), so once a non-zero demand
+arrived it ran without the PLC needing to write reg 34409.
+
+---
+
+## Verdict (original diagnosis)
 
 The comms layer is **flawless** — correct baud/parity/address, valid CRCs, and
 the fan ACKs every request. This is **not** a wiring, baud, parity, or address
